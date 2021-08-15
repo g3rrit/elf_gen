@@ -1,0 +1,7 @@
+*.cmx
+*.cmi
+*.o
+.merlin
+.vscode
+out
+elf_gen
