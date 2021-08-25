@@ -46,11 +46,7 @@ let elf_program_hdr = {|
 00 10 00 00     # 54 p_align: 1000 for x86
 |}
 
-let elf_program_seg = {|
-B8 01 00 00 00  # 59 eax <- 1 (exit)
-BB 03 00 00 00  # 5E ebx <- 3 (param)
-CD 80           # 60 syscall >> int 80
-|}
+(* UTILS *)
 
 let hex_to_bytes (s : string) : Bytes.t =
     Str.global_replace (Str.regexp " \\|\n\\|#.*$") "" s |>
@@ -65,8 +61,81 @@ let write_to_file (path : string) (data : bytes) =
     else Printf.printf "Wrote [%d] bytes to file [%s]\n" write_len path
     ; Unix.close fd
 
-let () =
+let bts (v : int) : string = Printf.sprintf "%02X" v
+let its (v : int) : string =
+    String.concat ""
+    [ Printf.sprintf "%02X" (v land 0xff)
+    ; Printf.sprintf "%02X" ((v lsr 8) land 0xff)
+    ; Printf.sprintf "%02X" ((v lsr 16) land 0xff)
+    ; Printf.sprintf "%02X" ((v lsr 24) land 0xff)
+    ]
+
+
+(* This is slow *)
+let (+.) (a : string) (b : string) : string = String.concat "" [a; b]
+
+(* INSTRUCTIONS *)
+
+module Reg = struct
+    type t
+        = EAX
+        | EBX
+        | ECX
+        | EDX
+        | ESI
+        | EDI
+        | ESP (* Stack Pointer *)
+        | EBP (* Base Pointer *)
+
+    let num (reg : t) : int =
+        match reg with
+            | EAX -> 0
+            | ECX -> 1
+            | EDX -> 2
+            | EBX -> 3
+            | ESP -> 4
+            | EBP -> 5
+            | ESI -> 6
+            | EDI -> 7
+
+    let mod_rm (a : t) (b : t) : int =
+        0xc0 + (num b) + (8 * (num a))
+    
+    let mod_rms (a : t) (b : t) : string =
+        mod_rm a b |> bts
+end
+
+let movi (dst : Reg.t) (v : int) =
+    (0xb8 + (Reg.num dst) |> bts) +. (its v)
+
+let mov (dst : Reg.t) (src : Reg.t) =
+    "8B" +. (Reg.mod_rms dst src)
+
+let add (dst : Reg.t) (src : Reg.t) =
+    "03" +. (Reg.mod_rms dst src)
+
+let xor (dst : Reg.t) (src : Reg.t) =
+    "33" +. (Reg.mod_rms dst src)
+
+let ret : string = "C3"
+
+let syscall : string = "CD 80"
+
+(* MAIN *)
+
+let elf_program_seg =
+    String.concat ""
+    [ movi Reg.EAX 1
+    ; movi Reg.ECX 111
+    ; xor Reg.ECX Reg.ECX
+    ; movi Reg.EDX 43
+    ; add Reg.ECX Reg.EDX
+    ; movi Reg.EBX 0
+    ; mov Reg.EBX Reg.ECX
+    ; syscall
+    ]
+
+let () = 
     Printf.printf "+-------------+\n|Elf Generator|\n+-------------+\n"
     ; let pgr = String.concat "" [ elf_file_hdr; elf_program_hdr; elf_program_seg ] in
-      hex_to_bytes pgr |> write_to_file "out"
-
+    hex_to_bytes pgr |> write_to_file "out"
