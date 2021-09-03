@@ -74,6 +74,22 @@ let its (v : int) : string =
 (* This is slow *)
 let (+.) (a : string) (b : string) : string = String.concat "" [a; b]
 
+type asm = ((int * string) -> (int * string))
+
+let bind ma f = fun s ->
+    let (a, ins) = ma s in
+    let mb = f a in
+    mb (a, ins)
+
+let lift (ins : string) : asm  = fun s ->
+    let (a, inss) = s in
+    (a, inss +. ins)
+
+let (let*) x f = bind x f
+let (let+) x f = bind (lift x) f
+
+let run_asm (ma : asm) : string = ma (0, "") |> snd
+
 (* INSTRUCTIONS *)
 
 module Reg = struct
@@ -117,23 +133,22 @@ let add (dst : Reg.t) (src : Reg.t) =
 let xor (dst : Reg.t) (src : Reg.t) =
     "33" +. (Reg.mod_rms dst src)
 
-let ret : string = "C3"
+let ret = "C3"
 
-let syscall : string = "CD 80"
+let syscall = "CD 80"
 
 (* MAIN *)
 
 let elf_program_seg =
-    String.concat ""
-    [ movi Reg.EAX 1
-    ; movi Reg.ECX 111
-    ; xor Reg.ECX Reg.ECX
-    ; movi Reg.EDX 43
-    ; add Reg.ECX Reg.EDX
-    ; movi Reg.EBX 0
-    ; mov Reg.EBX Reg.ECX
-    ; syscall
-    ]
+    run_asm @@
+    let+ _ = movi Reg.EAX 1 in
+    let+ _ = movi Reg.ECX 111 in
+    let+ _ = xor Reg.ECX Reg.ECX in
+    let+ _ = movi Reg.EDX 43 in
+    let+ _ = add Reg.ECX Reg.EDX in
+    let+ _ = movi Reg.EBX 0 in
+    let+ _ = mov Reg.EBX Reg.ECX in
+    lift syscall
 
 let () = 
     Printf.printf "+-------------+\n|Elf Generator|\n+-------------+\n"
