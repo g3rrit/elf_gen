@@ -36,7 +36,7 @@ let elf_program_hdr = {|
 
 54 00 00 00     # 3C p_offset: file offset where segment begins
 54 80 04 08     # 40 p_vaddr: virtual address of segment in memory (x86: 08048054)
-    
+
 00 00 00 00     # 44 p_paddr: physical address of segment, unspecified by 386 supplement
 0C 00 00 00     # 48 p_filesz: size in bytes of the segment in the file image ############
 
@@ -56,12 +56,12 @@ let write_to_file (path : string) (data : bytes) =
     let data_len = Bytes.length data in
     let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_CREAT ] 0o777 in
     let write_len = Unix.write fd data 0 data_len in
-    if write_len != data_len 
+    if write_len != data_len
     then Printf.printf "Unable to write to file [%s]\n" path
     else Printf.printf "Wrote [%d] bytes to file [%s]\n" write_len path
     ; Unix.close fd
 
-let bts (v : int) : string = Printf.sprintf "%02X" v
+let bts (v : int) : string = Printf.sprintf "%02X" (0xff land v)
 let its (v : int) : string =
     String.concat ""
     [ Printf.sprintf "%02X" (v land 0xff)
@@ -70,25 +70,27 @@ let its (v : int) : string =
     ; Printf.sprintf "%02X" ((v lsr 24) land 0xff)
     ]
 
-
 (* This is slow *)
 let (+.) (a : string) (b : string) : string = String.concat "" [a; b]
 
-type asm = ((int * string) -> (int * string))
+type asm = ((int * int * string) -> (int * int * string))
 
 let bind ma f = fun s ->
-    let (a, ins) = ma s in
-    let mb = f a in
-    mb (a, ins)
+    let (a, w, ins) = ma s in
+    let mb = f (a - w) in
+    mb (a, w, ins)
 
 let lift (ins : string) : asm  = fun s ->
-    let (a, inss) = s in
-    (a, inss +. ins)
+    let (a, w, inss) = s in
+    let len = (hex_to_bytes ins |> Bytes.length) in
+    (a + len, len, inss +. ins)
 
 let (let*) x f = bind x f
 let (let+) x f = bind (lift x) f
 
-let run_asm (ma : asm) : string = ma (0, "") |> snd
+let geti = lift ""
+
+let run_asm (ma : asm) : string = let (_, _, r) = ma (0, 0, "") in r
 
 (* INSTRUCTIONS *)
 
@@ -116,10 +118,14 @@ module Reg = struct
 
     let mod_rm (a : t) (b : t) : int =
         0xc0 + (num b) + (8 * (num a))
-    
+
     let mod_rms (a : t) (b : t) : string =
         mod_rm a b |> bts
 end
+
+let sjmp (d : int) : asm =
+    let* ip = geti in
+    "EB" +. (d - (ip + 2) |> bts) |> lift
 
 let movi (dst : Reg.t) (v : int) =
     (0xb8 + (Reg.num dst) |> bts) +. (its v)
@@ -142,15 +148,18 @@ let syscall = "CD 80"
 let elf_program_seg =
     run_asm @@
     let+ _ = movi Reg.EAX 1 in
-    let+ _ = movi Reg.ECX 111 in
-    let+ _ = xor Reg.ECX Reg.ECX in
-    let+ _ = movi Reg.EDX 43 in
+    let+ ii = movi Reg.ECX 111 in
+    let+ i0 = xor Reg.ECX Reg.ECX in
+    let+ i1 = movi Reg.EDX 43 in
     let+ _ = add Reg.ECX Reg.EDX in
     let+ _ = movi Reg.EBX 0 in
     let+ _ = mov Reg.EBX Reg.ECX in
+    let* _ = sjmp i0 in
+    let* _ = sjmp i1 in
+    let+ _ = movi Reg.EBX ii in
     lift syscall
 
-let () = 
+let () =
     Printf.printf "+-------------+\n|Elf Generator|\n+-------------+\n"
     ; let pgr = String.concat "" [ elf_file_hdr; elf_program_hdr; elf_program_seg ] in
     hex_to_bytes pgr |> write_to_file "out"

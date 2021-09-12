@@ -9,4 +9,5 @@ merlin:
 	./merlin_init.sh | grep hex >> .merlin
 
 clean:
-	rm -rf ${BIN} *.o *.cmi *.cmx
+	rm -rf ${BIN} *.o *.cmi *.cmx out
+
